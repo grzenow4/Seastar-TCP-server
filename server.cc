@@ -73,7 +73,7 @@ future<> tcp_server::connection::process() {
         getline(ss, key, '$');
         co_return co_await do_load(key);
     }
-    co_return co_await write(input_err);
+    co_return co_await make_ready_future<>();
 }
 
 future<std::string> tcp_server::connection::read_once() {

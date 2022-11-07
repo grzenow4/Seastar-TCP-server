@@ -13,7 +13,6 @@
 const std::string done = "DONE$";
 const std::string found = "FOUND$";
 const std::string not_found = "NOTFOUND$";
-const std::string input_err = "INPUTERROR";
 const std::regex store_reg("STORE\\$[a-z]*\\$[a-z]*\\$");
 const std::regex load_reg("LOAD\\$[a-z]*\\$");
 
