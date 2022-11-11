@@ -3,11 +3,11 @@
 #include <iostream>
 #include <map>
 #include <regex>
-#include <vector>
 
 #include <seastar/core/coroutine.hh>
 #include <seastar/core/reactor.hh>
 #include <seastar/core/seastar.hh>
+#include <seastar/core/sharded.hh>
 #include <seastar/core/temporary_buffer.hh>
 
 const std::string done = "DONE$";
@@ -16,19 +16,19 @@ const std::string not_found = "NOTFOUND$";
 const std::regex store_reg("STORE\\$[a-z]*\\$[a-z]*\\$");
 const std::regex load_reg("LOAD\\$[a-z]*\\$");
 
-class tcp_server {
-    std::vector<seastar::server_socket> _tcp_listeners;
+class tcp_server : public seastar::peering_sharded_service<tcp_server> {
+    seastar::server_socket _tcp_listener;
     std::map<std::string, std::string> _data;
 public:
     seastar::future<> listen(seastar::ipv4_addr addr);
 
     seastar::future<> stop();
 
-    void do_accepts(std::vector<seastar::server_socket>& listeners);
+    void do_accept(seastar::server_socket& listener);
 
-    seastar::future<> store(std::string key, std::string value);
+    seastar::future<> store(const std::string& key, const std::string& value);
 
-    seastar::future<std::optional<std::string>> load(std::string key);
+    seastar::future<std::optional<std::string>> load(const std::string& key);
 
     class connection {
         tcp_server& _server;
@@ -44,10 +44,10 @@ public:
 
         seastar::future<std::string> read();
 
-        seastar::future<> write(std::string msg);
+        seastar::future<> write(const std::string& msg);
 
-        seastar::future<> do_store(std::string key, std::string value);
+        seastar::future<> do_store(const std::string& key, const std::string& value);
 
-        seastar::future<> do_load(std::string key);
+        seastar::future<> do_load(const std::string& key);
     };
 };

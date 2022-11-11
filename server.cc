@@ -2,12 +2,21 @@
 
 using namespace seastar;
 
+static int calc_hash(const std::string& s) {
+    int res = 0;
+    for (int c: s) {
+        res += c;
+    }
+    std::cout << "Hash dla słowa " << s << ": " << res % smp::count << '\n';
+    return res % smp::count;
+}
+
 future<> tcp_server::listen(ipv4_addr addr) {
     listen_options lo;
     lo.proto = transport::TCP;
     lo.reuse_address = true;
-    _tcp_listeners.push_back(seastar::listen(make_ipv4_address(addr), lo));
-    do_accepts(_tcp_listeners);
+    _tcp_listener = seastar::listen(make_ipv4_address(addr), lo);
+    do_accept(_tcp_listener);
     return make_ready_future<>();
 }
 
@@ -15,9 +24,8 @@ future<> tcp_server::stop() {
     return make_ready_future<>();
 }
 
-void tcp_server::do_accepts(std::vector<server_socket>& listeners) {
-    int which = listeners.size() - 1;
-    (void)listeners[which].accept().then([this, &listeners] (accept_result ar) mutable {
+void tcp_server::do_accept(server_socket& listener) {
+    (void)listener.accept().then([this, &listener] (accept_result ar) mutable {
         connected_socket fd = std::move(ar.connection);
         socket_address addr = std::move(ar.remote_address);
         auto conn = new connection(*this, std::move(fd), addr);
@@ -29,7 +37,7 @@ void tcp_server::do_accepts(std::vector<server_socket>& listeners) {
                 std::cout << "request error " << ex.what() << "\n";
             }
         });
-        do_accepts(listeners);
+        do_accept(listener);
     }).then_wrapped([] (auto&& f) {
         try {
             f.get();
@@ -39,12 +47,14 @@ void tcp_server::do_accepts(std::vector<server_socket>& listeners) {
     });
 }
 
-future<> tcp_server::store(std::string key, std::string value) {
+future<> tcp_server::store(const std::string& key, const std::string& value) {
+    std::cout << "store() wywołane dla klucza " << key << " na shardzie: " << this_shard_id << '\n';
     _data[key] = value;
     return make_ready_future<>();
 }
 
-future<std::optional<std::string>> tcp_server::load(std::string key) {
+future<std::optional<std::string>> tcp_server::load(const std::string& key) {
+    std::cout << "load() wywołane dla klucza " << key << " na shardzie: " << this_shard_id << '\n';
     return _data.find(key) != _data.end()
         ? make_ready_future<std::optional<std::string>>(_data[key])
         : make_ready_future<std::optional<std::string>>(std::nullopt);
@@ -65,13 +75,21 @@ future<> tcp_server::connection::process() {
         getline(ss, command, '$');
         getline(ss, key, '$');
         getline(ss, value, '$');
-        co_return co_await do_store(key, value);
+        int which = calc_hash(key);
+        co_return co_await _server.container().invoke_on(which, [this, key, value] (auto& tcp_server) {
+            // działaj
+            return this->do_store(key, value);
+        });
     } else if (regex_match(cmd, load_reg)) {
         std::stringstream ss(cmd);
         std::string command, key;
         getline(ss, command, '$');
         getline(ss, key, '$');
-        co_return co_await do_load(key);
+        int which = calc_hash(key);
+        co_return co_await _server.container().invoke_on(which, [this, key] (auto& tcp_server) {
+            // działaj
+            return this->do_load(key);
+        });
     }
     co_return co_await make_ready_future<>();
 }
@@ -101,18 +119,18 @@ future<std::string> tcp_server::connection::read() {
     co_return co_await make_ready_future<std::string>(cmd);
 }
 
-future<> tcp_server::connection::write(std::string msg) {
+future<> tcp_server::connection::write(const std::string& msg) {
     co_await _write_buf.write(msg);
     co_await _write_buf.flush();
 }
 
-future<> tcp_server::connection::do_store(std::string key, std::string value) {
+future<> tcp_server::connection::do_store(const std::string& key, const std::string& value) {
     co_await _server.store(key, value);
     co_await write(done);
     co_return co_await this->process();
 }
 
-future<> tcp_server::connection::do_load(std::string key) {
+future<> tcp_server::connection::do_load(const std::string& key) {
     auto res = co_await _server.load(key);
     std::string msg;
     if (res.has_value()) {
