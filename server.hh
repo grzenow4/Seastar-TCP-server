@@ -45,9 +45,5 @@ public:
         seastar::future<std::string> read();
 
         seastar::future<> write(const std::string& msg);
-
-        seastar::future<> do_store(const std::string& key, const std::string& value);
-
-        seastar::future<> do_load(const std::string& key);
     };
 };
